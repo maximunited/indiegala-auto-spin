@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.pyc
+.indiegala-session/
+*.log
+debug_*.png
+venv/
+.venv/
