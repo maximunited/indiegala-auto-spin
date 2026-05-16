@@ -80,21 +80,27 @@ run.bat
 2. Create Basic Task → "IndieGala Daily Spin"
 3. Trigger: Daily at desired time (e.g., 9:00 AM)
 4. Action: Start a program
-   - Program: `C:\Users\Maxim\Projects\indiegala-auto-spin\venv\Scripts\python.exe`
+   - Program: `%USERPROFILE%\Projects\indiegala-auto-spin\venv\Scripts\python.exe`
    - Arguments: `spin_wheel.py`
-   - Start in: `C:\Users\Maxim\Projects\indiegala-auto-spin`
+   - Start in: `%USERPROFILE%\Projects\indiegala-auto-spin`
+   
+   **Note:** Replace the path above with your actual project location.
 
 ### Option 2: Windows PowerShell Scheduled Task
 
 ```powershell
-$action = New-ScheduledTaskAction -Execute "C:\Users\Maxim\Projects\indiegala-auto-spin\venv\Scripts\python.exe" `
+$projectPath = "$env:USERPROFILE\Projects\indiegala-auto-spin"
+
+$action = New-ScheduledTaskAction -Execute "$projectPath\venv\Scripts\python.exe" `
     -Argument "spin_wheel.py" `
-    -WorkingDirectory "C:\Users\Maxim\Projects\indiegala-auto-spin"
+    -WorkingDirectory $projectPath
 
 $trigger = New-ScheduledTaskTrigger -Daily -At 9:00AM
 
 Register-ScheduledTask -TaskName "IndieGala Auto-Spin" -Action $action -Trigger $trigger
 ```
+
+**Note:** Update `$projectPath` to match your actual project location.
 
 ### Option 3: cron (WSL/Linux)
 
@@ -102,8 +108,8 @@ Register-ScheduledTask -TaskName "IndieGala Auto-Spin" -Action $action -Trigger 
 # Edit crontab
 crontab -e
 
-# Add line to run daily at 9 AM:
-0 9 * * * cd /c/Users/Maxim/Projects/indiegala-auto-spin && source venv/Scripts/activate && python spin_wheel.py >> /tmp/indiegala-spin.log 2>&1
+# Add line to run daily at 9 AM (update the path to your project location):
+0 9 * * * cd ~/Projects/indiegala-auto-spin && source venv/Scripts/activate && python spin_wheel.py >> /tmp/indiegala-spin.log 2>&1
 ```
 
 ## How It Works
