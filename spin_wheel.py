@@ -46,8 +46,11 @@ def human_type(element, text, debug=False):
 
 
 def is_first_run(user_data_dir):
-    """Return True if no Chrome session cookies exist yet (never logged in)."""
-    return not (user_data_dir / 'Default' / 'Cookies').exists()
+    """Return True if no Chrome session cookies exist yet (never logged in).
+    Chrome 96+ stores cookies in Default/Network/Cookies, not Default/Cookies."""
+    network_cookies = user_data_dir / 'Default' / 'Network' / 'Cookies'
+    legacy_cookies = user_data_dir / 'Default' / 'Cookies'
+    return not network_cookies.exists() and not legacy_cookies.exists()
 
 
 def try_dismiss(driver, selectors, timeout=1.5, debug=False, label='popup'):
