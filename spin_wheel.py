@@ -33,17 +33,43 @@ except ImportError:
 
 
 def random_delay(min_sec=0.5, max_sec=2.0):
-    """Add random human-like delay"""
     time.sleep(random.uniform(min_sec, max_sec))
 
 
 def human_type(element, text, debug=False):
-    """Type text with random human-like delays between keystrokes"""
+    """Type text with short per-keystroke delays to appear human without wasting time."""
     for char in text:
         element.send_keys(char)
-        time.sleep(random.uniform(0.05, 0.15))
+        time.sleep(random.uniform(0.02, 0.06))
     if debug:
-        print(f"Typed text with human-like timing")
+        print("Filled field")
+
+
+def is_first_run(user_data_dir):
+    """Return True if no Chrome session cookies exist yet (never logged in)."""
+    return not (user_data_dir / 'Default' / 'Cookies').exists()
+
+
+def try_dismiss(driver, selectors, timeout=1.5, debug=False, label='popup'):
+    """
+    Try each selector in order; click the first visible match within timeout.
+    Returns True if dismissed, False if nothing found.
+    Short timeout means we don't stall when the popup simply isn't there.
+    """
+    for selector_type, selector_value in selectors:
+        try:
+            el = WebDriverWait(driver, timeout).until(
+                EC.element_to_be_clickable((selector_type, selector_value))
+            )
+            driver.execute_script("arguments[0].click();", el)
+            if debug:
+                print(f"Dismissed {label} via: {selector_value}")
+            return True
+        except TimeoutException:
+            continue
+    if debug:
+        print(f"No {label} found")
+    return False
 
 
 def spin_wheel(headless=True, debug=False):
@@ -115,56 +141,23 @@ def spin_wheel(headless=True, debug=False):
                 driver.get('https://www.indiegala.com/login')
                 random_delay(2, 3)
 
-                # Dismiss popups that may appear
-                wait = WebDriverWait(driver, 5)
+                # Dismiss any popups quickly; only sleep if something was actually dismissed
+                cookie_dismissed = try_dismiss(driver, [
+                    (By.XPATH, "//button[contains(text(), 'I agree')]"),
+                    (By.XPATH, "//button[contains(text(), 'Accept')]"),
+                ], timeout=2, debug=debug, label='cookie popup')
+                if cookie_dismissed:
+                    random_delay(0.3, 0.6)
 
-                # Try to dismiss cookie policy popup first
-                try:
-                    cookie_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'I agree')]")))
-                    random_delay(0.3, 0.7)  # Human delay before clicking
-                    driver.execute_script("arguments[0].click();", cookie_btn)
-                    if debug:
-                        print("Dismissed cookie popup")
-                    random_delay(0.5, 1)
-                except TimeoutException:
-                    if debug:
-                        print("No cookie popup found")
-
-                # Try to close notification popup by X button
-                try:
-                    close_selectors = [
-                        (By.XPATH, "//button[contains(@class, 'close') or @aria-label='Close']"),
-                        (By.CSS_SELECTOR, "button.close"),
-                        (By.XPATH, "//button[text()='×']"),
-                        (By.XPATH, "//*[contains(text(), 'Subscribe to IndieGala')]/ancestor::div[1]//button"),
-                    ]
-
-                    for selector_type, selector_value in close_selectors:
-                        try:
-                            close_btn = driver.find_element(selector_type, selector_value)
-                            random_delay(0.3, 0.7)
-                            driver.execute_script("arguments[0].click();", close_btn)
-                            if debug:
-                                print(f"Closed notification popup via: {selector_value}")
-                            random_delay(0.5, 1)
-                            break
-                        except NoSuchElementException:
-                            continue
-                except Exception as e:
-                    if debug:
-                        print(f"Could not close notification popup: {e}")
-
-                # Or try to dismiss with "Don't allow" button
-                try:
-                    notif_btn = driver.find_element(By.XPATH, "//button[contains(text(), \"Don't allow\")]")
-                    random_delay(0.3, 0.7)
-                    driver.execute_script("arguments[0].click();", notif_btn)
-                    if debug:
-                        print("Dismissed notification popup with Don't allow button")
-                    random_delay(0.5, 1)
-                except NoSuchElementException:
-                    if debug:
-                        print("Don't allow button not found")
+                notif_dismissed = try_dismiss(driver, [
+                    (By.XPATH, "//button[contains(@class, 'close') or @aria-label='Close']"),
+                    (By.CSS_SELECTOR, "button.close"),
+                    (By.XPATH, "//button[text()='×']"),
+                    (By.XPATH, "//button[contains(text(), \"Don't allow\")]"),
+                    (By.XPATH, "//*[contains(text(), 'Subscribe to IndieGala')]/ancestor::div[1]//button"),
+                ], timeout=1, debug=debug, label='notification popup')
+                if notif_dismissed:
+                    random_delay(0.3, 0.6)
 
                 # Wait for login form to appear
                 wait = WebDriverWait(driver, 10)
@@ -261,54 +254,44 @@ def spin_wheel(headless=True, debug=False):
                     print("ERROR: Could not find password field. Screenshot saved to debug_no_password_field.png")
                     sys.exit(1)
 
-                # Fill in credentials with human-like typing
                 if debug:
                     print("Filling in credentials...")
 
-                # Click on email field first (more human-like)
-                random_delay(0.3, 0.7)
                 email_input.click()
-                random_delay(0.2, 0.5)
-
-                # Type email with human-like delays
+                random_delay(0.1, 0.3)
                 human_type(email_input, email, debug)
-                random_delay(0.3, 0.7)
+                random_delay(0.2, 0.4)
 
-                # Click on password field
                 password_input.click()
-                random_delay(0.2, 0.5)
-
-                # Type password with human-like delays
+                random_delay(0.1, 0.2)
                 human_type(password_input, password, debug)
-                random_delay(0.5, 1.5)
+                random_delay(0.3, 0.6)
 
-                # Check for CAPTCHA and wait for user to solve it
                 if debug:
                     print("Checking for CAPTCHA...")
 
                 try:
                     recaptcha = driver.find_element(By.CSS_SELECTOR, '.g-recaptcha, iframe[src*="recaptcha"]')
                     if recaptcha.is_displayed():
+                        if headless:
+                            driver.save_screenshot('debug_captcha_headless.png')
+                            print("ERROR: CAPTCHA required but running headless.")
+                            print("Delete ~/.indiegala-session and run again — it will open visibly for first-time setup.")
+                            sys.exit(1)
                         print("\n" + "="*70)
-                        print("⚠  CAPTCHA DETECTED - Please solve it manually!")
+                        print("CAPTCHA DETECTED - Please solve it in the browser window!")
                         print("="*70)
-                        print("1. Look at the browser window")
-                        print("2. Click the 'I'm not a robot' checkbox")
-                        print("3. Solve any image challenges if they appear")
-                        print("4. Come back here and press ENTER to continue")
-                        print("="*70 + "\n")
-
-                        try:
+                        if sys.stdin.isatty():
                             input("Press ENTER after you've solved the CAPTCHA...")
-                        except EOFError:
-                            print("Non-interactive mode: waiting 60 seconds for CAPTCHA...")
-                            time.sleep(60)
-                        random_delay(0.5, 1)
+                        else:
+                            print("Non-interactive: waiting 90 seconds...")
+                            time.sleep(90)
+                        random_delay(0.3, 0.6)
                         if debug:
-                            print("Continuing after CAPTCHA solve...")
+                            print("Continuing after CAPTCHA...")
                 except NoSuchElementException:
                     if debug:
-                        print("No CAPTCHA detected - lucky!")
+                        print("No CAPTCHA detected")
 
                 # Find and click submit button
                 submit_selectors = [
@@ -479,9 +462,24 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser(description='IndieGala Auto-Spin Bot')
-    parser.add_argument('--visible', action='store_true', help='Run browser in visible mode')
-    parser.add_argument('--debug', action='store_true', help='Enable debug output')
+    parser.add_argument('--visible', action='store_true', help='Force visible browser (overrides auto-detect)')
+    parser.add_argument('--headless', action='store_true', help='Force headless browser (overrides auto-detect)')
+    parser.add_argument('--debug', action='store_true', help='Enable verbose debug output')
 
     args = parser.parse_args()
 
-    spin_wheel(headless=not args.visible, debug=args.debug)
+    # Auto-detect: first run (no saved session) → visible so user can solve CAPTCHA.
+    # Explicit --visible / --headless always wins.
+    session_dir = Path.home() / '.indiegala-session'
+    first = is_first_run(session_dir)
+    if args.visible:
+        headless = False
+    elif args.headless:
+        headless = True
+    else:
+        headless = not first
+        if first:
+            print("First run detected — opening browser visibly for login/CAPTCHA setup.")
+            print("Future runs will be fully headless and automated.")
+
+    spin_wheel(headless=headless, debug=args.debug)
