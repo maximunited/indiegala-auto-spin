@@ -10,6 +10,12 @@ import sys
 import time
 import random
 from pathlib import Path
+
+# Ensure UTF-8 output on Windows terminals (handles emoji in print statements)
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -292,7 +298,11 @@ def spin_wheel(headless=True, debug=False):
                         print("4. Come back here and press ENTER to continue")
                         print("="*70 + "\n")
 
-                        input("Press ENTER after you've solved the CAPTCHA...")
+                        try:
+                            input("Press ENTER after you've solved the CAPTCHA...")
+                        except EOFError:
+                            print("Non-interactive mode: waiting 60 seconds for CAPTCHA...")
+                            time.sleep(60)
                         random_delay(0.5, 1)
                         if debug:
                             print("Continuing after CAPTCHA solve...")
