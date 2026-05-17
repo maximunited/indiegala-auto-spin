@@ -3,73 +3,70 @@
 Automatically logs in to IndieGala and spins the daily Wheel of Fortune.
 
 **Features:**
-- ✅ Stealth browser mode to minimize CAPTCHA detection
-- ✅ Human-like typing and delays
-- ✅ Persistent session (login once, automated forever)
-- ✅ Automatic wheel spinning
-- ✅ Works with Windows Task Scheduler or cron
+- Stealth browser mode to minimize CAPTCHA detection
+- Human-like typing and delays
+- Persistent session (login once, automated forever)
+- Auto-detects first run — opens visibly for setup, headless for all future runs
+- Automatic wheel spinning with prize result printed to console
+- Works with Windows Task Scheduler or cron
 
 ## Setup
 
-1. **Install Python dependencies:**
+1. **Create a virtual environment and install dependencies:**
    ```bash
    cd indiegala-auto-spin
+   python -m venv venv
    pip install -r requirements.txt
    ```
-   The script uses `undetected-chromedriver` which automatically manages ChromeDriver.
+   > The run scripts (`run.bat` / `run.sh`) do this automatically on first launch.
 
 2. **Set up credentials:**
-   
+
    Create a `.env` file with your IndieGala credentials:
    ```bash
    cp .env.example .env
    # Then edit .env with your email and password
    ```
 
-## First Run - Important!
+## First Run
 
-The script uses **stealth techniques** to avoid CAPTCHA, but you may still need to solve it once on first login:
+On first run the script detects that no session exists and **automatically opens the browser visibly** — no flags needed:
 
 ```bash
-# Activate virtual environment
-source venv/Scripts/activate  # Windows Git Bash
-# OR
-venv\Scripts\activate  # Windows CMD
+# Windows CMD / PowerShell
+.\run.bat
 
-# Run in visible mode with debug
-python spin_wheel.py --visible --debug
+# Git Bash / Linux
+./run.sh
 ```
 
 **What will happen:**
-1. Browser opens in **stealth mode** (harder to detect as bot)
-2. Script fills in your email and password with **human-like typing delays**
-3. **IF CAPTCHA APPEARS** - Script will pause and ask you to solve it
+1. Browser opens in stealth mode
+2. Script fills in your email and password automatically
+3. **IF CAPTCHA APPEARS** — script pauses and asks you to solve it
 4. Solve the "I'm not a robot" CAPTCHA in the browser window
 5. Press ENTER in the terminal to continue
-6. Script logs in and spins the wheel
-7. Your session is saved for future automated runs
+6. Script logs in and spins the wheel, printing the prize won
+7. Session is saved — all future runs are fully headless and automated
 
-**After the first successful login**, the browser session is saved in `~/.indiegala-session`. Future runs will be **fully automated** without needing CAPTCHA solving!
-
-**Note:** The stealth mode (using `undetected-chromedriver`) significantly reduces CAPTCHA appearances. Many users may not see CAPTCHA at all on first run!
+> The stealth mode (`undetected-chromedriver`) significantly reduces CAPTCHA appearances. Many users may not see one at all on first run.
 
 ## Daily Usage
 
-### Run manually (headless):
+After the first successful login, all runs are headless by default:
+
 ```bash
-source venv/Scripts/activate
+# Windows CMD / PowerShell
+.\run.bat
+
+# Git Bash / Linux / macOS
+./run.sh
+
+# Direct Python (venv must be active)
+source venv/Scripts/activate   # Windows Git Bash
+# or
+source venv/bin/activate        # Linux/macOS
 python spin_wheel.py
-```
-
-### Run with visible browser:
-```bash
-source venv/Scripts/activate
-python spin_wheel.py --visible
-```
-
-### Quick run (Windows):
-```bash
-run.bat
 ```
 
 ## Automation Setup
@@ -80,19 +77,15 @@ run.bat
 2. Create Basic Task → "IndieGala Daily Spin"
 3. Trigger: Daily at desired time (e.g., 9:00 AM)
 4. Action: Start a program
-   - Program: `%USERPROFILE%\Projects\indiegala-auto-spin\venv\Scripts\python.exe`
-   - Arguments: `spin_wheel.py`
+   - Program: `%USERPROFILE%\Projects\indiegala-auto-spin\run.bat`
    - Start in: `%USERPROFILE%\Projects\indiegala-auto-spin`
-   
-   **Note:** Replace the path above with your actual project location.
 
 ### Option 2: Windows PowerShell Scheduled Task
 
 ```powershell
 $projectPath = "$env:USERPROFILE\Projects\indiegala-auto-spin"
 
-$action = New-ScheduledTaskAction -Execute "$projectPath\venv\Scripts\python.exe" `
-    -Argument "spin_wheel.py" `
+$action = New-ScheduledTaskAction -Execute "$projectPath\run.bat" `
     -WorkingDirectory $projectPath
 
 $trigger = New-ScheduledTaskTrigger -Daily -At 9:00AM
@@ -100,25 +93,23 @@ $trigger = New-ScheduledTaskTrigger -Daily -At 9:00AM
 Register-ScheduledTask -TaskName "IndieGala Auto-Spin" -Action $action -Trigger $trigger
 ```
 
-**Note:** Update `$projectPath` to match your actual project location.
-
 ### Option 3: cron (WSL/Linux)
 
 ```bash
-# Edit crontab
 crontab -e
 
-# Add line to run daily at 9 AM (update the path to your project location):
-0 9 * * * cd ~/Projects/indiegala-auto-spin && source venv/Scripts/activate && python spin_wheel.py >> /tmp/indiegala-spin.log 2>&1
+# Add line to run daily at 9 AM:
+0 9 * * * cd ~/Projects/indiegala-auto-spin && ./run.sh >> /tmp/indiegala-spin.log 2>&1
 ```
 
 ## How It Works
 
-1. **Session Management**: Uses persistent Chrome session stored in `~/.indiegala-session`
-2. **Login**: Navigates to login page, fills credentials, waits for CAPTCHA (first run only)
-3. **Wheel Detection**: Waits for the "Spin" button to appear (popup shows automatically when logged in)
-4. **Spin**: Clicks the spin button and waits for animation
-5. **Result**: Captures and displays the prize won
+1. **First-run detection**: Checks for an existing Chrome session (`~/.indiegala-session`). No session → opens visibly for login/CAPTCHA. Session exists → runs fully headless.
+2. **Session management**: Uses persistent Chrome session stored in `~/.indiegala-session`
+3. **Login**: Navigates to login page, fills credentials with human-like typing, waits for CAPTCHA if needed (first run only)
+4. **Wheel detection**: Waits for the Spin button to appear (popup shows automatically when logged in)
+5. **Spin**: Clicks the spin button and polls for the result element
+6. **Result**: Captures and prints the prize won
 
 ## Troubleshooting
 
@@ -126,26 +117,35 @@ crontab -e
 - Make sure `.env` file exists with correct credentials
 - Or set environment variables manually
 
-### CAPTCHA required every time
+### CAPTCHA required on every run
 - The browser session might not be saving properly
-- Check permissions on `~/.indiegala-session` directory
-- Try deleting `~/.indiegala-session` and running first-time setup again
+- Check permissions on `~/.indiegala-session`
+- Delete `~/.indiegala-session` and run again to redo first-time setup
+
+### "ERROR: CAPTCHA required but running headless"
+- Session cookies were lost or expired
+- Delete `~/.indiegala-session` and run again — it will open visibly for re-login
 
 ### "Wheel popup did not appear"
 - You may have already spun the wheel today (once per 24 hours)
-- The site might have changed - run with `--visible --debug` to inspect
+- Run with `--visible --debug` to inspect the page
 
 ### Login fails with correct credentials
 - Solve CAPTCHA as prompted during first run
-- Check if IndieGala is accessible from your location
 - Try manually logging in through a regular browser first
 
-### Wheel selectors not working
-- IndieGala may have updated their HTML structure
-- Run with `--visible --debug` and inspect the page
-- Update selectors in `spin_wheel.py` (search for "spin_button" section)
+### Wheel result not printed
+- A `debug_result.png` screenshot is saved automatically
+- Run with `--visible --debug` to watch the spin live
 
-## Advanced Options
+## Command Line Options
+
+| Flag | Description |
+|---|---|
+| *(none)* | Auto-detect: headless if session exists, visible if first run |
+| `--visible` | Force visible browser window |
+| `--headless` | Force headless mode (even on first run) |
+| `--debug` | Enable verbose debug output |
 
 **Environment Variables (instead of .env file):**
 ```bash
@@ -154,21 +154,8 @@ export INDIEGALA_PASSWORD="your-password"
 python spin_wheel.py
 ```
 
-**Command Line Options:**
-- `--visible` : Show browser window (default: headless)
-- `--debug` : Enable verbose debug output
-
 ## Security Notes
 
 - Never commit your `.env` file to git (it's in `.gitignore`)
 - Your password is only used locally to log in
 - Session cookies are stored locally in `~/.indiegala-session`
-- Use a strong, unique password for IndieGala
-
-## Support
-
-If you encounter issues:
-1. Run with `--visible --debug` to see what's happening
-2. Check the screenshots saved in the project directory (debug_*.png)
-3. Make sure you're using the latest version of Chrome/Chromium
-4. Verify your `.env` credentials are correct
