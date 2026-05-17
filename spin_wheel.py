@@ -72,6 +72,96 @@ def try_dismiss(driver, selectors, timeout=1.5, debug=False, label='popup'):
     return False
 
 
+def _wait_for_result(driver, timeout=15, debug=False):
+    """
+    Poll until a prize/result element appears after the wheel spin.
+    Returns the prize text, or None if nothing readable was found within timeout.
+
+    Strategy:
+    1. Poll specific CSS selectors for common prize-display patterns.
+    2. When the spin button disappears (spin started), watch for any new modal/dialog.
+    3. Fall back to reading visible text from any overlay that appeared.
+    4. Final fallback: JS to find the deepest non-empty text node inside wheel area.
+    """
+    # Selectors tried in order — prefer specific classes over generic ones
+    result_selectors = [
+        # IndieGala-specific guesses based on their naming patterns
+        '.wheel-result', '.wheel-prize', '.spin-result', '.spin-prize',
+        '.fortune-result', '.fortune-prize', '.daily-prize',
+        # Common prize/reward class fragments (partial match via attribute contains)
+        '[class*="prize"]', '[class*="reward"]', '[class*="result"]',
+        # SweetAlert2 — very common for prize popups
+        '.swal2-title', '.swal2-html-container', '.swal2-content',
+        # Bootstrap modal that becomes visible
+        '.modal.show .modal-title', '.modal.show .modal-body',
+        '.modal.fade.show h2', '.modal.fade.show h3', '.modal.fade.show p',
+        # Generic dialog/overlay
+        '[role="dialog"] h2', '[role="dialog"] h3', '[role="dialog"] p',
+        '[role="alertdialog"]',
+        '.popup-content h2', '.popup-content h3',
+        '.overlay-content h2', '.overlay-content',
+        '.alert-success', '.toast-success',
+    ]
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        for sel in result_selectors:
+            try:
+                el = driver.find_element(By.CSS_SELECTOR, sel)
+                if not el.is_displayed():
+                    continue
+                text = el.text.strip()
+                if text and len(text) > 1:
+                    if debug:
+                        print(f"Result found via selector '{sel}': {text}")
+                    return text
+            except NoSuchElementException:
+                continue
+        time.sleep(0.5)
+
+    # Fallback: scrape text from any visible modal/dialog that appeared
+    for container_sel in ['.modal.show', '[role="dialog"]', '.swal2-popup', '.popup', '.overlay']:
+        try:
+            container = driver.find_element(By.CSS_SELECTOR, container_sel)
+            if container.is_displayed():
+                text = container.text.strip()
+                if text:
+                    if debug:
+                        print(f"Result scraped from container '{container_sel}'")
+                    return text
+        except NoSuchElementException:
+            continue
+
+    # Last resort: JS — find all visible leaf text nodes in the document body
+    try:
+        result = driver.execute_script("""
+            var walker = document.createTreeWalker(
+                document.body, NodeFilter.SHOW_TEXT, null, false
+            );
+            var texts = [];
+            var node;
+            while (node = walker.nextNode()) {
+                var text = node.textContent.trim();
+                var parent = node.parentElement;
+                if (text.length > 2 && parent && parent.offsetParent !== null) {
+                    var cls = (parent.className || '') + ' ' + (parent.id || '');
+                    if (/prize|reward|result|win|spin|wheel|fortune/i.test(cls)) {
+                        texts.push(text);
+                    }
+                }
+            }
+            return texts.join(' | ');
+        """)
+        if result and result.strip():
+            if debug:
+                print(f"Result via JS text walker: {result.strip()}")
+            return result.strip()
+    except Exception:
+        pass
+
+    return None
+
+
 def spin_wheel(headless=True, debug=False):
     """
     Login to IndieGala and spin the daily wheel
@@ -425,25 +515,19 @@ def spin_wheel(headless=True, debug=False):
                     continue
 
             if spin_button:
-                # Human delay before clicking spin button
                 random_delay(0.5, 1.5)
-
                 if debug:
                     print("Clicking spin button...")
                 spin_button.click()
 
-                # Wait for spin animation
-                random_delay(5, 7)
-
-                # Try to capture the result
-                try:
-                    result_element = driver.find_element(By.CSS_SELECTOR, '.wheel-result, .prize-text, .win-text')
-                    result = result_element.text
-                    print(f"✓ Wheel spun successfully! Prize: {result}")
-                except NoSuchElementException:
-                    print("✓ Wheel spun successfully!")
+                result = _wait_for_result(driver, debug=debug)
+                if result:
+                    print(f"Wheel result: {result}")
+                else:
+                    print("Wheel spun — could not read result (check debug_result.png)")
+                    driver.save_screenshot('debug_result.png')
             else:
-                print("⚠ Could not find spin button. You may have already spun today.")
+                print("Could not find spin button. You may have already spun today.")
 
         except TimeoutException:
             print("⚠ Wheel popup did not appear. You may have already spun today.")
