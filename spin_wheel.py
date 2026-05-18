@@ -601,11 +601,20 @@ def spin_wheel(headless=True, debug=False):
             if spin_button:
                 # Dismiss any popups that might be blocking the spin button
                 notification_selectors = [
-                    (By.XPATH, "//button[contains(@class, 'close') or @aria-label='Close']"),
+                    (
+                        By.XPATH,
+                        "//button[contains(@class, 'close') or @aria-label='Close']",
+                    ),
                     (By.CSS_SELECTOR, "button.close"),
                     (By.XPATH, "//button[text()='×']"),
                 ]
-                try_dismiss(driver, notification_selectors, timeout=1, debug=debug, label="blocking popup")
+                try_dismiss(
+                    driver,
+                    notification_selectors,
+                    timeout=1,
+                    debug=debug,
+                    label="blocking popup",
+                )
 
                 random_delay(0.5, 1.5)
                 if debug:
