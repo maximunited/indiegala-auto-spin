@@ -600,13 +600,17 @@ def spin_wheel(headless=True, debug=False):
 
             if spin_button:
                 # Dismiss any popups that might be blocking the spin button
+                # Scope selectors to notification popup container to avoid closing the wheel modal
                 notification_selectors = [
                     (
                         By.XPATH,
-                        "//button[contains(@class, 'close') or @aria-label='Close']",
+                        "//div[contains(@class, 'sp-prompt-message')]//button[contains(@class, 'close') or @aria-label='Close']",
                     ),
-                    (By.CSS_SELECTOR, "button.close"),
-                    (By.XPATH, "//button[text()='×']"),
+                    (By.CSS_SELECTOR, ".sp-prompt-message button.close"),
+                    (
+                        By.XPATH,
+                        "//div[contains(@class, 'sp-prompt-message')]//button[text()='×']",
+                    ),
                 ]
                 try_dismiss(
                     driver,
@@ -615,6 +619,25 @@ def spin_wheel(headless=True, debug=False):
                     debug=debug,
                     label="blocking popup",
                 )
+
+                # Re-locate spin button after dismissing popups to avoid stale element reference
+                spin_button = None
+                for selector_type, selector_value in selectors_to_try:
+                    try:
+                        spin_button = wait.until(
+                            EC.element_to_be_clickable((selector_type, selector_value))
+                        )
+                        if debug:
+                            print(
+                                f"Re-located spin button using selector: {selector_value}"
+                            )
+                        break
+                    except TimeoutException:
+                        continue
+
+                if not spin_button:
+                    print("Could not re-locate spin button after dismissing popups.")
+                    return
 
                 random_delay(0.5, 1.5)
                 if debug:
