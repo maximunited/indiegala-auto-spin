@@ -599,10 +599,24 @@ def spin_wheel(headless=True, debug=False):
                     continue
 
             if spin_button:
+                # Dismiss any popups that might be blocking the spin button
+                notification_selectors = [
+                    (By.XPATH, "//button[contains(@class, 'close') or @aria-label='Close']"),
+                    (By.CSS_SELECTOR, "button.close"),
+                    (By.XPATH, "//button[text()='×']"),
+                ]
+                try_dismiss(driver, notification_selectors, timeout=1, debug=debug, label="blocking popup")
+
                 random_delay(0.5, 1.5)
                 if debug:
                     print("Clicking spin button...")
-                spin_button.click()
+
+                # Use JavaScript click to bypass any overlay issues
+                try:
+                    driver.execute_script("arguments[0].click();", spin_button)
+                except Exception:
+                    # Fallback to regular click
+                    spin_button.click()
 
                 result = _wait_for_result(driver, debug=debug)
                 if result:
