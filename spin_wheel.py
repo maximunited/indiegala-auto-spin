@@ -6,9 +6,9 @@ Uses stealth techniques to avoid CAPTCHA detection
 """
 
 import os
+import random
 import sys
 import time
-import random
 from pathlib import Path
 
 # Ensure UTF-8 output on Windows terminals (handles emoji in print statements)
@@ -17,10 +17,10 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 import undetected_chromedriver as uc
+from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.webdriver.support.ui import WebDriverWait
 
 # Try to load .env file if it exists
 try:
