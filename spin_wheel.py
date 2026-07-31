@@ -17,7 +17,11 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 import undetected_chromedriver as uc
-from selenium.common.exceptions import NoSuchElementException, TimeoutException
+from selenium.common.exceptions import (
+    NoSuchElementException,
+    TimeoutException,
+    WebDriverException,
+)
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
@@ -183,8 +187,8 @@ def _wait_for_result(driver, timeout=15, debug=False):
             if debug:
                 print(f"Result via JS text walker: {result.strip()}")
             return result.strip()
-    except Exception:
-        pass
+    except WebDriverException:
+        return None
 
     return None
 
@@ -553,7 +557,7 @@ def spin_wheel(headless=True, debug=False):
                         )
                         sys.exit(1)
 
-                except Exception as e:
+                except WebDriverException as e:
                     driver.save_screenshot("debug_login_exception.png")
                     print(f"ERROR during login verification: {e}")
                     print("Screenshot saved to debug_login_exception.png")
@@ -646,7 +650,7 @@ def spin_wheel(headless=True, debug=False):
                 # Use JavaScript click to bypass any overlay issues
                 try:
                     driver.execute_script("arguments[0].click();", spin_button)
-                except Exception:
+                except WebDriverException:
                     # Fallback to regular click
                     spin_button.click()
 
@@ -662,7 +666,7 @@ def spin_wheel(headless=True, debug=False):
         except TimeoutException:
             print("⚠ Wheel popup did not appear. You may have already spun today.")
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — CLI boundary; report and exit
         print(f"ERROR: {e}")
         if debug:
             import traceback
