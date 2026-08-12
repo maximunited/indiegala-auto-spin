@@ -5,10 +5,16 @@ Automatically logs in and spins the daily Wheel of Fortune
 Uses stealth techniques to avoid CAPTCHA detection
 """
 
+import json
 import os
+import platform
 import random
+import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Ensure UTF-8 output on Windows terminals (handles emoji in print statements)
@@ -35,6 +41,99 @@ try:
         load_dotenv(env_path)
 except ImportError:
     pass  # python-dotenv not installed, will use environment variables
+
+# Exit codes for schedulers / Docker / monitoring
+EXIT_OK = 0  # spun successfully, or already spun today
+EXIT_ERROR = 1  # hard failure (login, missing UI, crash)
+EXIT_NEEDS_HUMAN = 2  # CAPTCHA / interactive setup required
+
+
+def get_session_dir() -> Path:
+    """Chrome profile + prize log directory. Override with INDIEGALA_SESSION_DIR."""
+    override = os.getenv("INDIEGALA_SESSION_DIR")
+    if override:
+        return Path(override)
+    return Path.home() / ".indiegala-session"
+
+
+def log_prize(status: str, result: str | None = None, debug: bool = False) -> None:
+    """Append one JSONL record to <session>/prizes.jsonl."""
+    session_dir = get_session_dir()
+    session_dir.mkdir(parents=True, exist_ok=True)
+    path = session_dir / "prizes.jsonl"
+    record = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "date": datetime.now().astimezone().date().isoformat(),
+        "status": status,
+        "result": result,
+    }
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    if debug:
+        print(f"Logged prize to {path}: {record}")
+
+
+def _windows_toast(title: str, message: str) -> bool:
+    """Show a balloon tip via PowerShell. Returns True if the process started."""
+    # Escape for single-quoted PowerShell strings
+    safe_title = title.replace("'", "''")
+    safe_msg = message.replace("'", "''")[:200]
+    script = f"""
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$n = New-Object System.Windows.Forms.NotifyIcon
+$n.Icon = [System.Drawing.SystemIcons]::Warning
+$n.Visible = $true
+$n.BalloonTipTitle = '{safe_title}'
+$n.BalloonTipText = '{safe_msg}'
+$n.ShowBalloonTip(8000)
+Start-Sleep -Seconds 9
+$n.Dispose()
+"""
+    try:
+        subprocess.Popen(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
+    except OSError:
+        return False
+
+
+def notify_failure(message: str, exit_code: int, debug: bool = False) -> None:
+    """Notify on failure: optional webhook, plus Windows toast on win32."""
+    title = f"IndieGala Auto-Spin failed (exit {exit_code})"
+    body = message.strip() or title
+
+    webhook = os.getenv("NOTIFY_WEBHOOK", "").strip()
+    if webhook:
+        # Discord-compatible payload; other webhooks often accept {"text": ...}
+        payload = json.dumps(
+            {"content": f"**{title}**\n{body}", "text": f"{title}\n{body}"}
+        ).encode("utf-8")
+        req = urllib.request.Request(
+            webhook,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "indiegala-auto-spin",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                if debug:
+                    print(f"Webhook notified: HTTP {resp.status}")
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            print(f"WARNING: webhook notify failed: {e}")
+
+    if platform.system() == "Windows":
+        if _windows_toast(title, body):
+            if debug:
+                print("Windows toast notification sent")
+        elif debug:
+            print("Windows toast notification unavailable")
 
 
 def random_delay(min_sec=0.5, max_sec=2.0):
@@ -195,11 +294,10 @@ def _wait_for_result(driver, timeout=15, debug=False):
 
 def spin_wheel(headless=True, debug=False):
     """
-    Login to IndieGala and spin the daily wheel
+    Login to IndieGala and spin the daily wheel.
 
-    Args:
-        headless: Run browser in headless mode (no visible window)
-        debug: Enable debug output
+    Returns:
+        EXIT_OK, EXIT_ERROR, or EXIT_NEEDS_HUMAN
     """
     # Get credentials from environment variables
     email = os.getenv("INDIEGALA_EMAIL")
@@ -209,11 +307,11 @@ def spin_wheel(headless=True, debug=False):
         print(
             "ERROR: Please set INDIEGALA_EMAIL and INDIEGALA_PASSWORD environment variables"
         )
-        sys.exit(1)
+        return EXIT_ERROR
 
     # Path to store persistent browser session
-    user_data_dir = Path.home() / ".indiegala-session"
-    user_data_dir.mkdir(exist_ok=True)
+    user_data_dir = get_session_dir()
+    user_data_dir.mkdir(parents=True, exist_ok=True)
 
     # Configure undetected Chrome options
     options = uc.ChromeOptions()
@@ -373,7 +471,7 @@ def spin_wheel(headless=True, debug=False):
                     print(
                         "ERROR: Could not find email field. Screenshot saved to debug_no_email_field.png"
                     )
-                    sys.exit(1)
+                    return EXIT_ERROR
 
                 # Find password field - specifically for login form
                 password_selectors = [
@@ -409,7 +507,7 @@ def spin_wheel(headless=True, debug=False):
                     print(
                         "ERROR: Could not find password field. Screenshot saved to debug_no_password_field.png"
                     )
-                    sys.exit(1)
+                    return EXIT_ERROR
 
                 if debug:
                     print("Filling in credentials...")
@@ -436,9 +534,9 @@ def spin_wheel(headless=True, debug=False):
                             driver.save_screenshot("debug_captcha_headless.png")
                             print("ERROR: CAPTCHA required but running headless.")
                             print(
-                                "Delete ~/.indiegala-session and run again — it will open visibly for first-time setup."
+                                "Delete the session dir and run again — it will open visibly for first-time setup."
                             )
-                            sys.exit(1)
+                            return EXIT_NEEDS_HUMAN
                         print("\n" + "=" * 70)
                         print(
                             "CAPTCHA DETECTED - Please solve it in the browser window!"
@@ -489,7 +587,7 @@ def spin_wheel(headless=True, debug=False):
                     print(
                         "ERROR: Could not find submit button. Screenshot saved to debug_no_submit_button.png"
                     )
-                    sys.exit(1)
+                    return EXIT_ERROR
 
                 if debug:
                     print("Submitting login form...")
@@ -555,19 +653,19 @@ def spin_wheel(headless=True, debug=False):
                         print(
                             "ERROR: Login failed. Check your credentials or solve CAPTCHA. Screenshot saved to debug_login_failed.png"
                         )
-                        sys.exit(1)
+                        return EXIT_ERROR
 
                 except WebDriverException as e:
                     driver.save_screenshot("debug_login_exception.png")
                     print(f"ERROR during login verification: {e}")
                     print("Screenshot saved to debug_login_exception.png")
-                    sys.exit(1)
+                    return EXIT_ERROR
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — login boundary; screenshot and return
                 driver.save_screenshot("debug_exception.png")
                 print(f"ERROR during login: {e}")
                 print("Screenshot saved to debug_exception.png")
-                raise
+                return EXIT_ERROR
 
         # Wait for and handle the Wheel of Fortune popup
         if debug:
@@ -641,7 +739,7 @@ def spin_wheel(headless=True, debug=False):
 
                 if not spin_button:
                     print("Could not re-locate spin button after dismissing popups.")
-                    return
+                    return EXIT_ERROR
 
                 random_delay(0.5, 1.5)
                 if debug:
@@ -657,14 +755,21 @@ def spin_wheel(headless=True, debug=False):
                 result = _wait_for_result(driver, debug=debug)
                 if result:
                     print(f"Wheel result: {result}")
+                    log_prize("won", result, debug=debug)
                 else:
                     print("Wheel spun — could not read result (check debug_result.png)")
                     driver.save_screenshot("debug_result.png")
+                    log_prize("spun_unknown", None, debug=debug)
+                return EXIT_OK
             else:
                 print("Could not find spin button. You may have already spun today.")
+                log_prize("already_spun", None, debug=debug)
+                return EXIT_OK
 
         except TimeoutException:
             print("⚠ Wheel popup did not appear. You may have already spun today.")
+            log_prize("already_spun", None, debug=debug)
+            return EXIT_OK
 
     except Exception as e:  # noqa: BLE001 — CLI boundary; report and exit
         print(f"ERROR: {e}")
@@ -672,7 +777,7 @@ def spin_wheel(headless=True, debug=False):
             import traceback
 
             traceback.print_exc()
-        sys.exit(1)
+        return EXIT_ERROR
     finally:
         driver.quit()
 
@@ -699,7 +804,7 @@ if __name__ == "__main__":
 
     # Auto-detect: first run (no saved session) → visible so user can solve CAPTCHA.
     # Explicit --visible / --headless always wins.
-    session_dir = Path.home() / ".indiegala-session"
+    session_dir = get_session_dir()
     first = is_first_run(session_dir)
     if args.visible:
         headless = False
@@ -713,4 +818,11 @@ if __name__ == "__main__":
             )
             print("Future runs will be fully headless and automated.")
 
-    spin_wheel(headless=headless, debug=args.debug)
+    code = spin_wheel(headless=headless, debug=args.debug)
+    if code != EXIT_OK:
+        notify_failure(
+            f"spin_wheel exited with code {code}. Check console / debug_*.png.",
+            code,
+            debug=args.debug,
+        )
+    raise SystemExit(code)
