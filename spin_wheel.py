@@ -57,9 +57,11 @@ def get_session_dir() -> Path:
 
 
 def log_prize(status: str, result: str | None = None, debug: bool = False) -> None:
-    """Append one JSONL record to <session>/prizes.jsonl."""
+    """Append one JSONL record to <session>/prizes.jsonl.
+
+    Never raises — logging must not flip a successful spin into EXIT_ERROR.
+    """
     session_dir = get_session_dir()
-    session_dir.mkdir(parents=True, exist_ok=True)
     path = session_dir / "prizes.jsonl"
     record = {
         "ts": datetime.now(timezone.utc).isoformat(),
@@ -67,8 +69,13 @@ def log_prize(status: str, result: str | None = None, debug: bool = False) -> No
         "status": status,
         "result": result,
     }
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    try:
+        session_dir.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError as e:
+        print(f"WARNING: could not write prize log ({path}): {e}")
+        return
     if debug:
         print(f"Logged prize to {path}: {record}")
 

@@ -1,7 +1,10 @@
 services:
   spin:
     build: .
-    env_file: .env
+    # Optional so seed/entrypoint runs work before credentials exist
+    env_file:
+      - path: .env
+        required: false
     environment:
       INDIEGALA_SESSION_DIR: /data/session
       # Optional: Discord/Slack-compatible webhook for failure alerts

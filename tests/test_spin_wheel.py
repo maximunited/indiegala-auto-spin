@@ -72,6 +72,40 @@ class TestLogPrize:
         sw.log_prize("won", "x", debug=True)
         assert "Logged prize" in capsys.readouterr().out
 
+    def test_oserror_warns_does_not_raise(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setenv("INDIEGALA_SESSION_DIR", str(tmp_path / "session"))
+
+        def boom(*_args, **_kwargs):
+            raise OSError("disk full")
+
+        with patch.object(sw.Path, "open", boom):
+            sw.log_prize("won", "x")
+        assert "WARNING: could not write prize log" in capsys.readouterr().out
+
+    def test_spin_ok_when_prize_log_unwritable(self, monkeypatch, tmp_path, capsys):
+        monkeypatch.setenv("INDIEGALA_EMAIL", "a@b.c")
+        monkeypatch.setenv("INDIEGALA_PASSWORD", "secret")
+        monkeypatch.setenv("INDIEGALA_SESSION_DIR", str(tmp_path / "session"))
+        monkeypatch.setattr(sw, "random_delay", lambda *a, **k: None)
+        monkeypatch.setattr(sw, "try_dismiss", lambda *a, **k: False)
+
+        def boom(*_args, **_kwargs):
+            raise OSError("disk full")
+
+        driver = MagicMock()
+        driver.find_element.return_value = MagicMock()
+        spin_btn = MagicMock()
+        with (
+            patch.object(sw.uc, "Chrome", return_value=driver),
+            patch.object(sw, "WebDriverWait") as wait_cls,
+            patch.object(sw, "_wait_for_result", return_value="Prize"),
+            patch.object(sw.Path, "open", boom),
+        ):
+            wait_cls.return_value.until.return_value = spin_btn
+            code = sw.spin_wheel(headless=True, debug=False)
+        assert code == sw.EXIT_OK
+        assert "WARNING: could not write prize log" in capsys.readouterr().out
+
 
 class TestIsFirstRun:
     def test_empty_dir_is_first(self, tmp_path):
