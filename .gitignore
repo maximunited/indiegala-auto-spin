@@ -7,3 +7,4 @@ debug_*.png
 venv/
 .venv/
 .idea/
+.worktrees/
