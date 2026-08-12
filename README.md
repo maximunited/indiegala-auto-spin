@@ -21,6 +21,8 @@ Automatically logs in to IndieGala and spins the daily Wheel of Fortune.
    cd indiegala-auto-spin
    python -m venv venv
    pip install -r requirements.txt
+   # optional (tests):
+   pip install -r requirements-dev.txt
    ```
    > The run scripts (`run.bat` / `run.sh`) do this automatically on first launch.
 
@@ -31,6 +33,8 @@ Automatically logs in to IndieGala and spins the daily Wheel of Fortune.
    cp .env.example .env
    # Then edit .env with your email and password
    ```
+
+More detail on exit codes, prize logs, webhooks, and Docker ops: [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ## First Run
 
@@ -202,6 +206,17 @@ docker compose run --rm spin
 ```
 
 Build only: `docker compose build`
+
+## Testing
+
+Unit tests cover session helpers, prize logging, notifications, exit-code paths, and CLI `main()` (Chrome is mocked — no live IndieGala calls).
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+pytest -q
+```
+
+CI runs the same suite on every PR (`.github/workflows/tests.yml`).
 
 **Environment Variables (instead of .env file):**
 ```bash

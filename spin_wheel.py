@@ -330,7 +330,11 @@ def spin_wheel(headless=True, debug=False):
     if debug:
         print("Initializing stealth browser...")
 
-    driver = uc.Chrome(options=options, use_subprocess=True)
+    try:
+        driver = uc.Chrome(options=options, use_subprocess=True)
+    except Exception as e:  # noqa: BLE001 — driver startup is a hard failure boundary
+        print(f"ERROR: failed to start Chrome: {e}")
+        return EXIT_ERROR
 
     # Set realistic viewport
     driver.set_window_size(1920, 1080)
@@ -782,7 +786,8 @@ def spin_wheel(headless=True, debug=False):
         driver.quit()
 
 
-if __name__ == "__main__":
+def main(argv: list[str] | None = None) -> int:
+    """CLI entrypoint. Returns an exit code (also used by tests)."""
     import argparse
 
     parser = argparse.ArgumentParser(description="IndieGala Auto-Spin Bot")
@@ -800,7 +805,7 @@ if __name__ == "__main__":
         "--debug", action="store_true", help="Enable verbose debug output"
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # Auto-detect: first run (no saved session) → visible so user can solve CAPTCHA.
     # Explicit --visible / --headless always wins.
@@ -825,4 +830,8 @@ if __name__ == "__main__":
             code,
             debug=args.debug,
         )
-    raise SystemExit(code)
+    return code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
