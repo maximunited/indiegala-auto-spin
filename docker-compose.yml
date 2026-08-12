@@ -1,0 +1,20 @@
+services:
+  spin:
+    build: .
+    # Optional so seed/entrypoint runs work before credentials exist
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      INDIEGALA_SESSION_DIR: /data/session
+      # Optional: Discord/Slack-compatible webhook for failure alerts
+      # NOTIFY_WEBHOOK: ${NOTIFY_WEBHOOK:-}
+    volumes:
+      - indiegala-session:/data/session
+    # Chrome needs shared memory; default 64MB is too small
+    shm_size: "2gb"
+    # Uncomment for a one-shot cron-style host schedule:
+    # profiles: ["manual"]
+
+volumes:
+  indiegala-session:

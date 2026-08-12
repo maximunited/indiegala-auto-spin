@@ -8,6 +8,10 @@ Automatically logs in to IndieGala and spins the daily Wheel of Fortune.
 - Persistent session (login once, automated forever)
 - Auto-detects first run — opens visibly for setup, headless for all future runs
 - Automatic wheel spinning with prize result printed to console
+- Prize history logged to `prizes.jsonl` in the session dir
+- Failure notifications (Windows toast + optional webhook)
+- Stable exit codes for Task Scheduler / cron / Docker
+- Optional Docker image for headless daily runs
 - Works with Windows Task Scheduler or cron
 
 ## Setup
@@ -17,6 +21,8 @@ Automatically logs in to IndieGala and spins the daily Wheel of Fortune.
    cd indiegala-auto-spin
    python -m venv venv
    pip install -r requirements.txt
+   # optional (tests):
+   pip install -r requirements-dev.txt
    ```
    > The run scripts (`run.bat` / `run.sh`) do this automatically on first launch.
 
@@ -27,6 +33,8 @@ Automatically logs in to IndieGala and spins the daily Wheel of Fortune.
    cp .env.example .env
    # Then edit .env with your email and password
    ```
+
+More detail on exit codes, prize logs, webhooks, and Docker ops: [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ## First Run
 
@@ -141,16 +149,82 @@ crontab -e
 ## Command Line Options
 
 | Flag | Description |
-|---|---|
+| ---- | ----------- |
 | *(none)* | Auto-detect: headless if session exists, visible if first run |
 | `--visible` | Force visible browser window |
 | `--headless` | Force headless mode (even on first run) |
 | `--debug` | Enable verbose debug output |
 
+## Exit Codes
+
+| Code | Meaning |
+| ---- | ------- |
+| `0` | Success — spun, or already spun today |
+| `1` | Hard failure — login/UI/crash |
+| `2` | Needs human — CAPTCHA / interactive setup |
+
+Use these in Task Scheduler / cron / Docker health wrappers.
+
+## Prize Log
+
+Each run appends one line to `~/.indiegala-session/prizes.jsonl` (or `$INDIEGALA_SESSION_DIR/prizes.jsonl`):
+
+```json
+{"ts":"2026-08-12T22:00:00+00:00","date":"2026-08-13","status":"won","result":"50 Galagems"}
+```
+
+`status` is one of: `won`, `spun_unknown`, `already_spun`.
+
+## Failure Notifications
+
+On exit `1` or `2`:
+
+1. **Webhook** (optional) — set `NOTIFY_WEBHOOK` to a Discord/Slack-compatible URL
+2. **Windows toast** — balloon tip via PowerShell (no extra packages)
+
+## Docker
+
+Do first-run login on the host (CAPTCHA needs a real display), then reuse that session volume in Docker for daily headless runs.
+
+```bash
+# 1) Host first-run (creates ~/.indiegala-session)
+./run.sh   # or run.bat
+
+# 2) Seed the named volume from your host session (Linux/macOS / WSL example)
+docker compose run --rm -v "$HOME/.indiegala-session:/seed:ro" --entrypoint bash spin \
+  -c "cp -a /seed/. /data/session/"
+
+# 3) Daily spin
+docker compose run --rm spin
+```
+
+On Windows PowerShell, copy into the volume with:
+
+```powershell
+docker compose run --rm -v "${env:USERPROFILE}\.indiegala-session:/seed:ro" --entrypoint bash spin -c "cp -a /seed/. /data/session/"
+docker compose run --rm spin
+```
+
+Build only: `docker compose build`
+
+## Testing
+
+Unit tests cover session helpers, prize logging, notifications, exit-code paths, and CLI `main()` (Chrome is mocked — no live IndieGala calls).
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+pytest -q
+```
+
+CI runs the same suite on every PR (`.github/workflows/tests.yml`).
+
 **Environment Variables (instead of .env file):**
 ```bash
 export INDIEGALA_EMAIL="your-email@example.com"
 export INDIEGALA_PASSWORD="your-password"
+# optional:
+# export INDIEGALA_SESSION_DIR="/path/to/session"
+# export NOTIFY_WEBHOOK="https://discord.com/api/webhooks/..."
 python spin_wheel.py
 ```
 
@@ -158,4 +232,5 @@ python spin_wheel.py
 
 - Never commit your `.env` file to git (it's in `.gitignore`)
 - Your password is only used locally to log in
-- Session cookies are stored locally in `~/.indiegala-session`
+- Session cookies are stored locally in `~/.indiegala-session` (or `INDIEGALA_SESSION_DIR`)
+- Prize history is local JSONL next to the session; do not commit it
