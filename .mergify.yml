@@ -1,9 +1,0 @@
-pull_request_rules:
-  - name: Auto-merge when all checks pass
-    conditions:
-      - check-success = pre-commit.ci - pr
-      - -draft
-      - -conflict
-    actions:
-      merge:
-        method: squash

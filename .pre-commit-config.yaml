@@ -18,3 +18,4 @@ repos:
 ci:
   autofix_commit_msg: "style: auto-fix from pre-commit.ci"
   autoupdate_schedule: weekly
+  automerge: true
