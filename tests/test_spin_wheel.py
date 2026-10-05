@@ -40,6 +40,31 @@ class TestGetSessionDir:
             assert sw.get_session_dir() == Path("/fake/home/.indiegala-session")
 
 
+class TestResetSessionDir:
+    def test_deletes_existing(self, tmp_path):
+        session = tmp_path / "session"
+        (session / "Default").mkdir(parents=True)
+        (session / "Default" / "Cookies").write_bytes(b"x")
+        assert sw.reset_session_dir(session) is True
+        assert not session.exists()
+
+    def test_missing_is_noop(self, tmp_path):
+        session = tmp_path / "nope"
+        assert sw.reset_session_dir(session) is False
+        assert not session.exists()
+
+    def test_oserror_returns_false(self, tmp_path, monkeypatch, capsys):
+        session = tmp_path / "session"
+        session.mkdir()
+
+        def boom(_path):
+            raise OSError("locked")
+
+        monkeypatch.setattr(sw.shutil, "rmtree", boom)
+        assert sw.reset_session_dir(session) is False
+        assert "could not delete session dir" in capsys.readouterr().out
+
+
 class TestLogPrize:
     def test_creates_jsonl_and_appends(self, tmp_path, monkeypatch):
         session = tmp_path / "session"
@@ -374,4 +399,20 @@ class TestMainCli:
 
         monkeypatch.setattr(sw, "spin_wheel", fake_spin)
         assert sw.main(["--visible"]) == sw.EXIT_OK
+        assert seen["headless"] is False
+
+    def test_reset_session_deletes_and_opens_visible(self, tmp_path, monkeypatch):
+        session = tmp_path / "session"
+        (session / "Default").mkdir(parents=True)
+        (session / "Default" / "Cookies").write_bytes(b"x")
+        monkeypatch.setenv("INDIEGALA_SESSION_DIR", str(session))
+        seen = {}
+
+        def fake_spin(*, headless, debug):
+            seen["headless"] = headless
+            return sw.EXIT_OK
+
+        monkeypatch.setattr(sw, "spin_wheel", fake_spin)
+        assert sw.main(["--reset-session"]) == sw.EXIT_OK
+        assert not session.exists()
         assert seen["headless"] is False

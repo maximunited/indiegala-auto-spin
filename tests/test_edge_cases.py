@@ -435,7 +435,10 @@ class TestLoginNegatives:
             wait_cls.return_value.until.return_value = email_el
             code = sw.spin_wheel(headless=True)
         assert code == sw.EXIT_NEEDS_HUMAN
-        assert "CAPTCHA required but running headless" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "CAPTCHA required but running headless" in out
+        assert str(tmp_path / "session") in out
+        assert "--reset-session" in out
         driver.save_screenshot.assert_any_call("debug_captcha_headless.png")
 
     def test_captcha_visible_non_tty_sleeps(self, monkeypatch, tmp_path, capsys):

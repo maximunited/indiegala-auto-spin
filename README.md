@@ -132,7 +132,8 @@ crontab -e
 
 ### "ERROR: CAPTCHA required but running headless"
 - Session cookies were lost or expired
-- Delete `~/.indiegala-session` and run again — it will open visibly for re-login
+- The error prints the exact session dir to delete
+- Re-run with `--reset-session` (no prompt) — it wipes that dir and opens the browser visibly
 
 ### "Wheel popup did not appear"
 - You may have already spun the wheel today (once per 24 hours)
@@ -154,6 +155,7 @@ crontab -e
 | `--visible` | Force visible browser window |
 | `--headless` | Force headless mode (even on first run) |
 | `--debug` | Enable verbose debug output |
+| `--reset-session` | Delete the session dir with no prompt, then first-run visible login |
 
 ## Exit Codes
 

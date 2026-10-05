@@ -53,7 +53,7 @@ Webhook failures are logged as warnings and do not change the exit code.
 ## Scheduling tips
 
 - Prefer checking `%ERRORLEVEL%` / `$?` after `run.bat` / `run.sh`.
-- On exit `2`, delete/reset the session dir and re-run visibly once.
+- On exit `2`, the script prints the session dir. Re-run with `--reset-session` (or delete that dir) and run visibly once.
 - Docker daily runs assume a seeded session volume (CAPTCHA cannot be solved headless in CI/containers easily).
 
 ## Docker
@@ -75,3 +75,4 @@ docker compose run --rm spin
 | `debug_*.png` | Screenshot at failure (gitignored) |
 | `--debug` | Verbose console tracing |
 | `--visible` | Watch the browser live |
+| `--reset-session` | Wipe session dir with no prompt, then continue |

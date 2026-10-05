@@ -9,6 +9,7 @@ import json
 import os
 import platform
 import random
+import shutil
 import subprocess
 import sys
 import time
@@ -54,6 +55,22 @@ def get_session_dir() -> Path:
     if override:
         return Path(override)
     return Path.home() / ".indiegala-session"
+
+
+def reset_session_dir(session_dir: Path | None = None) -> bool:
+    """Delete the Chrome session directory. Returns True if it existed and was removed.
+
+    No confirmation prompt. Prints only if deletion fails.
+    """
+    path = get_session_dir() if session_dir is None else session_dir
+    if not path.exists():
+        return False
+    try:
+        shutil.rmtree(path)
+    except OSError as e:
+        print(f"ERROR: could not delete session dir ({path}): {e}")
+        return False
+    return True
 
 
 def log_prize(status: str, result: str | None = None, debug: bool = False) -> None:
@@ -543,9 +560,12 @@ def spin_wheel(headless=True, debug=False):
                     if recaptcha.is_displayed():
                         if headless:
                             driver.save_screenshot("debug_captcha_headless.png")
+                            session = get_session_dir()
                             print("ERROR: CAPTCHA required but running headless.")
+                            print(f"Session dir: {session}")
                             print(
-                                "Delete the session dir and run again — it will open visibly for first-time setup."
+                                "Delete that directory and run again, or re-run with "
+                                "--reset-session — it will open visibly for first-time setup."
                             )
                             return EXIT_NEEDS_HUMAN
                         print("\n" + "=" * 70)
@@ -811,12 +831,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--debug", action="store_true", help="Enable verbose debug output"
     )
+    parser.add_argument(
+        "--reset-session",
+        action="store_true",
+        help="Delete the session dir with no prompt, then continue (first-run visible login)",
+    )
 
     args = parser.parse_args(argv)
 
     # Auto-detect: first run (no saved session) → visible so user can solve CAPTCHA.
     # Explicit --visible / --headless always wins.
     session_dir = get_session_dir()
+    if args.reset_session:
+        reset_session_dir(session_dir)
     first = is_first_run(session_dir)
     if args.visible:
         headless = False
