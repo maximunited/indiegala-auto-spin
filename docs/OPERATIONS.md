@@ -76,3 +76,14 @@ docker compose run --rm spin
 | `--debug` | Verbose console tracing |
 | `--visible` | Watch the browser live |
 | `--reset-session` | Wipe session dir with no prompt, then continue |
+
+### ChromeDriver version mismatch
+
+If startup fails with `This version of ChromeDriver only supports Chrome version N` while your browser is `N-1`, Chrome is mid-update or lagging. The script pins ChromeDriver to the installed Chrome major version. Delete the cached driver and retry:
+
+```bat
+del "%APPDATA%\undetected_chromedriver\undetected_chromedriver.exe"
+run.bat
+```
+
+Or finish updating Chrome (chrome://settings/help) so browser and driver both land on the same major.

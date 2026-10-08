@@ -21,6 +21,33 @@ def _isolate_env(monkeypatch, tmp_path):
     yield
 
 
+class TestPrintBanner:
+    def test_boxes_title_and_body(self, capsys):
+        sw.print_banner("WHEEL RESULT", "💿 10\nGalaSilver")
+        out = capsys.readouterr().out
+        assert "╔" in out and "╚" in out
+        assert "WHEEL RESULT" in out
+        assert "GalaSilver" in out
+
+    def test_strips_promo_after_blank_line(self, capsys):
+        sw.print_banner(
+            "WHEEL RESULT",
+            "💿 10\nGalaSilver\n\nFeeling lucky? Spin the Wheel of Fortune!",
+        )
+        out = capsys.readouterr().out
+        assert "GalaSilver" in out
+        assert "Feeling lucky" not in out
+
+    def test_wraps_long_ascii_line(self, capsys):
+        sw.print_banner(
+            "ALREADY SPUN",
+            "No spin button found — you may have already spun today.",
+        )
+        out = capsys.readouterr().out
+        assert "today." in out
+        assert "spun t\n" not in out
+
+
 class TestExitCodes:
     def test_constants(self):
         assert sw.EXIT_OK == 0
@@ -38,6 +65,43 @@ class TestGetSessionDir:
         monkeypatch.delenv("INDIEGALA_SESSION_DIR", raising=False)
         with patch.object(sw.Path, "home", return_value=Path("/fake/home")):
             assert sw.get_session_dir() == Path("/fake/home/.indiegala-session")
+
+
+class TestGetChromeMajorVersion:
+    def test_parses_major(self, monkeypatch):
+        monkeypatch.setattr(
+            sw.uc, "find_chrome_executable", lambda: r"C:\Chrome\chrome.exe"
+        )
+        monkeypatch.setattr(
+            sw, "_read_chrome_version_string", lambda _exe: "99.0.9999.99"
+        )
+        assert sw.get_chrome_major_version() == 99
+
+    def test_missing_exe_returns_none(self, monkeypatch):
+        monkeypatch.setattr(sw.uc, "find_chrome_executable", lambda: None)
+        assert sw.get_chrome_major_version() is None
+
+    def test_bad_version_returns_none(self, monkeypatch):
+        monkeypatch.setattr(sw.uc, "find_chrome_executable", lambda: "/usr/bin/chrome")
+        monkeypatch.setattr(
+            sw, "_read_chrome_version_string", lambda _exe: "not-a-version"
+        )
+        assert sw.get_chrome_major_version() is None
+
+    def test_version_from_chrome_stdout(self, monkeypatch):
+        monkeypatch.setattr(sw.sys, "platform", "linux")
+
+        class Result:
+            stdout = "Google Chrome 99.0.9999.99\n"
+
+        monkeypatch.setattr(
+            sw.subprocess,
+            "run",
+            lambda *a, **k: Result(),
+        )
+        assert (
+            sw._read_chrome_version_string("/usr/bin/google-chrome") == "99.0.9999.99"
+        )
 
 
 class TestResetSessionDir:
@@ -298,17 +362,20 @@ class TestSpinWheelFlow:
         monkeypatch.setenv("INDIEGALA_PASSWORD", "secret")
         monkeypatch.setenv("INDIEGALA_SESSION_DIR", str(tmp_path / "session"))
         monkeypatch.setattr(sw, "random_delay", lambda *a, **k: None)
+        monkeypatch.setattr(sw, "get_chrome_major_version", lambda: 99)
 
         driver = self._chrome_mock()
 
         with (
-            patch.object(sw.uc, "Chrome", return_value=driver),
+            patch.object(sw.uc, "Chrome", return_value=driver) as chrome_cls,
             patch.object(sw, "WebDriverWait") as wait_cls,
         ):
             wait_cls.return_value.until.side_effect = sw.TimeoutException()
             code = sw.spin_wheel(headless=True, debug=False)
 
         assert code == sw.EXIT_OK
+        chrome_cls.assert_called_once()
+        assert chrome_cls.call_args.kwargs["version_main"] == 99
         driver.quit.assert_called_once()
         log_path = tmp_path / "session" / "prizes.jsonl"
         row = json.loads(log_path.read_text(encoding="utf-8"))

@@ -57,6 +57,84 @@ def get_session_dir() -> Path:
     return Path.home() / ".indiegala-session"
 
 
+def _read_windows_product_version(exe: str) -> str | None:
+    """Read ProductVersion from a PE file via Win32 version APIs."""
+    try:
+        from ctypes import (
+            POINTER,
+            byref,
+            c_void_p,
+            cast,
+            create_string_buffer,
+            windll,
+            wintypes,
+            wstring_at,
+        )
+    except ImportError:
+        return None
+
+    size = windll.version.GetFileVersionInfoSizeW(exe, None)
+    if not size:
+        return None
+    buf = create_string_buffer(size)
+    if not windll.version.GetFileVersionInfoW(exe, 0, size, buf):
+        return None
+
+    length = wintypes.UINT()
+    ptr = c_void_p()
+    if not windll.version.VerQueryValueW(
+        buf, r"\VarFileInfo\Translation", byref(ptr), byref(length)
+    ):
+        return None
+    lang, codepage = cast(ptr, POINTER(wintypes.WORD * 2)).contents
+    key = rf"\StringFileInfo\{lang:04x}{codepage:04x}\ProductVersion"
+    if not windll.version.VerQueryValueW(buf, key, byref(ptr), byref(length)):
+        return None
+    return wstring_at(ptr)
+
+
+def _read_chrome_version_string(exe: str) -> str | None:
+    """Best-effort Chrome version string for the given executable."""
+    if sys.platform == "win32":
+        ver = _read_windows_product_version(exe)
+        if ver:
+            return ver
+    try:
+        completed = subprocess.run(
+            [exe, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    # e.g. "Google Chrome 154.0.8037.98"
+    for token in (completed.stdout or "").split():
+        if token[0:1].isdigit() and "." in token:
+            return token
+    return None
+
+
+def get_chrome_major_version() -> int | None:
+    """Return installed Chrome major version, or None if detection fails.
+
+    undetected-chromedriver defaults to the latest Stable ChromeDriver. That
+    breaks when the local browser lags (common mid-update). Callers should pass
+    the result as version_main to uc.Chrome().
+    """
+    exe = uc.find_chrome_executable()
+    if not exe:
+        return None
+    version = _read_chrome_version_string(exe)
+    if not version:
+        return None
+    try:
+        return int(version.split(".")[0])
+    except (ValueError, IndexError):
+        return None
+
+
 def reset_session_dir(session_dir: Path | None = None) -> bool:
     """Delete the Chrome session directory. Returns True if it existed and was removed.
 
@@ -71,6 +149,119 @@ def reset_session_dir(session_dir: Path | None = None) -> bool:
         print(f"ERROR: could not delete session dir ({path}): {e}")
         return False
     return True
+
+
+def _display_width(text: str) -> int:
+    """Terminal column width (emoji/CJK ≈ 2 cols; ignores ZWJ/variation selectors)."""
+    width = 0
+    for ch in text:
+        o = ord(ch)
+        if o in (0x200D,) or 0xFE00 <= o <= 0xFE0F:
+            continue
+        if o > 0x1100 and (
+            o <= 0x115F
+            or 0x2600 <= o <= 0x27BF
+            or 0x2E80 <= o <= 0xA4CF
+            or 0xAC00 <= o <= 0xD7A3
+            or 0xF900 <= o <= 0xFAFF
+            or 0xFE10 <= o <= 0xFE6F
+            or 0xFF00 <= o <= 0xFF60
+            or 0xFFE0 <= o <= 0xFFE6
+            or 0x1F300 <= o <= 0x1FAFF
+        ):
+            width += 2
+        else:
+            width += 1
+    return width
+
+
+def _wrap_display(text: str, max_width: int) -> list[str]:
+    """Word-wrap using display width so emoji don't break the box."""
+    if _display_width(text) <= max_width:
+        return [text]
+    words = text.split()
+    if not words:
+        return [text]
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip() if current else word
+        if _display_width(candidate) <= max_width:
+            current = candidate
+            continue
+        if current:
+            lines.append(current)
+        # Hard-split an oversized single token
+        while _display_width(word) > max_width:
+            acc = ""
+            for ch in word:
+                trial = acc + ch
+                if _display_width(trial) > max_width and acc:
+                    lines.append(acc)
+                    acc = ch
+                else:
+                    acc = trial
+            word = acc
+            break
+        current = word
+    if current:
+        lines.append(current)
+    return lines
+
+
+_BANNER_PROMO_HINTS = (
+    "feeling lucky",
+    "wheel of fortune",
+    "don't miss",
+    "come back daily",
+    "limited-time",
+    "logged-in user",
+    "here's what you could",
+    "guaranteed win",
+    "total rewards across",
+    "won't be around forever",
+)
+
+
+def print_banner(title: str, body: str | None = None, width: int = 56) -> None:
+    """Print a Unicode box so the spin outcome stands out in the console."""
+    body_lines: list[str] = []
+    if body:
+        for ln in body.strip().splitlines():
+            text = ln.strip()
+            if not text:
+                # Blank line usually separates prize text from page promo copy
+                break
+            low = text.lower()
+            if any(hint in low for hint in _BANNER_PROMO_HINTS):
+                break
+            if len(text) > 120:
+                break
+            body_lines.append(text)
+
+    content_width = max(width - 4, 20)
+    text_width = content_width - 2  # leading/trailing pad spaces inside content
+
+    def _row(text: str) -> str:
+        pad = content_width - _display_width(text) - 2
+        pad = max(pad, 0)
+        return f"║  {text}{' ' * pad}║"
+
+    top = "╔" + "═" * content_width + "╗"
+    mid = "╠" + "═" * content_width + "╣"
+    bot = "╚" + "═" * content_width + "╝"
+
+    print()
+    print(top)
+    for part in _wrap_display(title.strip(), text_width):
+        print(_row(part))
+    if body_lines:
+        print(mid)
+        for ln in body_lines:
+            for part in _wrap_display(ln, text_width):
+                print(_row(part))
+    print(bot)
+    print()
 
 
 def log_prize(status: str, result: str | None = None, debug: bool = False) -> None:
@@ -350,12 +541,19 @@ def spin_wheel(headless=True, debug=False):
     if headless:
         options.add_argument("--headless=new")
 
-    # Initialize undetected chromedriver
+    # Initialize undetected chromedriver, pinned to the installed Chrome major
+    # so we don't download a newer ChromeDriver during a mid-update lag.
+    version_main = get_chrome_major_version()
     if debug:
         print("Initializing stealth browser...")
+        if version_main is not None:
+            print(f"Pinning ChromeDriver to Chrome major {version_main}")
 
     try:
-        driver = uc.Chrome(options=options, use_subprocess=True)
+        chrome_kwargs = {"options": options, "use_subprocess": True}
+        if version_main is not None:
+            chrome_kwargs["version_main"] = version_main
+        driver = uc.Chrome(**chrome_kwargs)
     except Exception as e:  # noqa: BLE001 — driver startup is a hard failure boundary
         print(f"ERROR: failed to start Chrome: {e}")
         return EXIT_ERROR
@@ -785,20 +983,29 @@ def spin_wheel(headless=True, debug=False):
 
                 result = _wait_for_result(driver, debug=debug)
                 if result:
-                    print(f"Wheel result: {result}")
+                    print_banner("WHEEL RESULT", result)
                     log_prize("won", result, debug=debug)
                 else:
-                    print("Wheel spun — could not read result (check debug_result.png)")
+                    print_banner(
+                        "WHEEL SPUN",
+                        "Could not read prize text — see debug_result.png",
+                    )
                     driver.save_screenshot("debug_result.png")
                     log_prize("spun_unknown", None, debug=debug)
                 return EXIT_OK
             else:
-                print("Could not find spin button. You may have already spun today.")
+                print_banner(
+                    "ALREADY SPUN",
+                    "No spin button found — you may have already spun today.",
+                )
                 log_prize("already_spun", None, debug=debug)
                 return EXIT_OK
 
         except TimeoutException:
-            print("⚠ Wheel popup did not appear. You may have already spun today.")
+            print_banner(
+                "ALREADY SPUN",
+                "Wheel popup did not appear — you may have already spun today.",
+            )
             log_prize("already_spun", None, debug=debug)
             return EXIT_OK
 
