@@ -264,6 +264,32 @@ def print_banner(title: str, body: str | None = None, width: int = 56) -> None:
     print()
 
 
+def _normalize_prize_label(text: str) -> str:
+    """Collapse whitespace for comparing wheel-slot labels to the won prize."""
+    return " ".join(text.split()).casefold()
+
+
+def print_spin_summary(prize: str | None, options: list[str] | None = None) -> None:
+    """Print all wheel options (winner marked) plus a YOU WON / status banner."""
+    opts = [o.strip() for o in (options or []) if o and o.strip()]
+    won_key = _normalize_prize_label(prize) if prize else ""
+
+    if opts:
+        print()
+        print(f"Wheel options ({len(opts)}):")
+        for opt in opts:
+            mark = "★" if won_key and _normalize_prize_label(opt) == won_key else "·"
+            print(f"  {mark} {opt}")
+
+    if prize:
+        print_banner("YOU WON", prize)
+    else:
+        print_banner(
+            "WHEEL SPUN",
+            "Could not read prize text — see debug_result.png",
+        )
+
+
 def log_prize(status: str, result: str | None = None, debug: bool = False) -> None:
     """Append one JSONL record to <session>/prizes.jsonl.
 
@@ -394,20 +420,103 @@ def try_dismiss(driver, selectors, timeout=1.5, debug=False, label="popup"):
     return False
 
 
+def _is_prize_catalog(text: str) -> bool:
+    """True if text looks like the full wheel UI / promo, not a single prize."""
+    if not text:
+        return False
+    low = text.lower()
+    if any(
+        hint in low
+        for hint in (
+            "feeling lucky",
+            "wheel of fortune",
+            "logged-in user",
+            "here's what you could",
+            "guaranteed win",
+            "won't be around forever",
+        )
+    ):
+        return True
+    markers = ("galasilver", "galacredit", "steam key", "coupon")
+    if sum(1 for m in markers if m in low) >= 3:
+        return True
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    return len(lines) > 6
+
+
+def _read_indiegala_prize(driver) -> str | None:
+    """Read the filled prize from IndieGala's .fortune-wheel-results (may be hidden).
+
+    On spin click the site sets h4 span:last-child to
+    `${label_short} ${label}` immediately, then reveals the overlay after the
+    animation. Use textContent so we can read it before it becomes visible.
+    """
+    try:
+        text = driver.execute_script(
+            """
+            const results = document.querySelector('.fortune-wheel-results');
+            if (!results) return null;
+            const prize = results.querySelector('h4 span:last-child');
+            const label = (prize && prize.textContent || '').trim();
+            if (label && label.toLowerCase() !== 'you win:') return label;
+            const detail = results.querySelector('p');
+            const body = (detail && (detail.innerText || detail.textContent) || '')
+                .trim();
+            return body || null;
+            """
+        )
+    except WebDriverException:
+        return None
+    if not text or not isinstance(text, str):
+        return None
+    text = text.strip()
+    if len(text) < 2 or _is_prize_catalog(text):
+        return None
+    return text
+
+
+def _read_wheel_options(driver) -> list[str]:
+    """Snapshot labels from ul.fortune-wheel li before the wheel DOM is removed."""
+    try:
+        raw = driver.execute_script(
+            """
+            const items = document.querySelectorAll('ul.fortune-wheel > li');
+            if (!items || !items.length) return [];
+            return Array.from(items).map((li) => {
+                const text = (li.innerText || li.textContent || '')
+                    .replace(/\\s+/g, ' ')
+                    .trim();
+                return text;
+            }).filter(Boolean);
+            """
+        )
+    except WebDriverException:
+        return []
+    if not isinstance(raw, list):
+        return []
+    options: list[str] = []
+    for item in raw:
+        if isinstance(item, str) and item.strip():
+            options.append(" ".join(item.split()))
+    return options
+
+
 def _wait_for_result(driver, timeout=15, debug=False):
     """
     Poll until a prize/result element appears after the wheel spin.
     Returns the prize text, or None if nothing readable was found within timeout.
 
     Strategy:
-    1. Poll specific CSS selectors for common prize-display patterns.
-    2. When the spin button disappears (spin started), watch for any new modal/dialog.
-    3. Fall back to reading visible text from any overlay that appeared.
-    4. Final fallback: JS to find the deepest non-empty text node inside wheel area.
+    1. Prefer IndieGala `.fortune-wheel-results` (textContent, works while hidden).
+    2. Poll specific CSS selectors — reject full-wheel catalog scrapes.
+    3. Fall back to visible modal/dialog text (with the same rejection).
     """
-    # Selectors tried in order — prefer specific classes over generic ones
+    # Prefer IndieGala's real result node. Avoid `[class*="prize"]` — it matches
+    # the outer `.popup-time-prize` and returns the entire wheel UI.
     result_selectors = [
-        # IndieGala-specific guesses based on their naming patterns
+        ".fortune-wheel-results h4 span:last-child",
+        ".fortune-wheel-results p",
+        ".fortune-wheel-results",
         ".wheel-result",
         ".wheel-prize",
         ".spin-result",
@@ -415,15 +524,11 @@ def _wait_for_result(driver, timeout=15, debug=False):
         ".fortune-result",
         ".fortune-prize",
         ".daily-prize",
-        # Common prize/reward class fragments (partial match via attribute contains)
-        '[class*="prize"]',
-        '[class*="reward"]',
-        '[class*="result"]',
-        # SweetAlert2 — very common for prize popups
+        # SweetAlert2
         ".swal2-title",
         ".swal2-html-container",
         ".swal2-content",
-        # Bootstrap modal that becomes visible
+        # Bootstrap modal
         ".modal.show .modal-title",
         ".modal.show .modal-body",
         ".modal.fade.show h2",
@@ -437,72 +542,66 @@ def _wait_for_result(driver, timeout=15, debug=False):
         ".popup-content h2",
         ".popup-content h3",
         ".overlay-content h2",
-        ".overlay-content",
         ".alert-success",
         ".toast-success",
     ]
 
     deadline = time.time() + timeout
     while time.time() < deadline:
+        prize = _read_indiegala_prize(driver)
+        if prize:
+            if debug:
+                print(f"Result from .fortune-wheel-results: {prize}")
+            return prize
+
         for sel in result_selectors:
             try:
                 el = driver.find_element(By.CSS_SELECTOR, sel)
-                if not el.is_displayed():
-                    continue
-                text = el.text.strip()
-                if text and len(text) > 1:
-                    if debug:
-                        print(f"Result found via selector '{sel}': {text}")
-                    return text
+                # Prefer textContent: IndieGala fills the prize before the
+                # results overlay becomes visible.
+                raw = el.get_attribute("textContent")
+                if not isinstance(raw, str) or not raw.strip():
+                    raw = el.text if isinstance(getattr(el, "text", None), str) else ""
+                text = raw.strip()
+                if text and len(text) > 1 and not _is_prize_catalog(text):
+                    if "you win:" in text.lower() and "\n" not in text:
+                        # Outer h4 may include the "You win:" label — drop it
+                        text = text.split(":", 1)[-1].strip()
+                    if text and len(text) > 1 and not _is_prize_catalog(text):
+                        if debug:
+                            print(f"Result found via selector '{sel}': {text}")
+                        return text
             except NoSuchElementException:
+                continue
+            except WebDriverException:
                 continue
         time.sleep(0.5)
 
     # Fallback: scrape text from any visible modal/dialog that appeared
     for container_sel in [
+        ".fortune-wheel-results",
         ".modal.show",
         '[role="dialog"]',
         ".swal2-popup",
-        ".popup",
-        ".overlay",
     ]:
         try:
             container = driver.find_element(By.CSS_SELECTOR, container_sel)
-            if container.is_displayed():
-                text = container.text.strip()
-                if text:
-                    if debug:
-                        print(f"Result scraped from container '{container_sel}'")
-                    return text
+            raw = container.get_attribute("textContent")
+            if not isinstance(raw, str) or not raw.strip():
+                raw = (
+                    container.text
+                    if isinstance(getattr(container, "text", None), str)
+                    else ""
+                )
+            text = raw.strip()
+            if text and not _is_prize_catalog(text):
+                if debug:
+                    print(f"Result scraped from container '{container_sel}'")
+                return text
         except NoSuchElementException:
             continue
-
-    # Last resort: JS — find all visible leaf text nodes in the document body
-    try:
-        result = driver.execute_script("""
-            var walker = document.createTreeWalker(
-                document.body, NodeFilter.SHOW_TEXT, null, false
-            );
-            var texts = [];
-            var node;
-            while (node = walker.nextNode()) {
-                var text = node.textContent.trim();
-                var parent = node.parentElement;
-                if (text.length > 2 && parent && parent.offsetParent !== null) {
-                    var cls = (parent.className || '') + ' ' + (parent.id || '');
-                    if (/prize|reward|result|win|spin|wheel|fortune/i.test(cls)) {
-                        texts.push(text);
-                    }
-                }
-            }
-            return texts.join(' | ');
-        """)
-        if result and result.strip():
-            if debug:
-                print(f"Result via JS text walker: {result.strip()}")
-            return result.strip()
-    except WebDriverException:
-        return None
+        except WebDriverException:
+            continue
 
     return None
 
@@ -971,8 +1070,12 @@ def spin_wheel(headless=True, debug=False):
                     return EXIT_ERROR
 
                 random_delay(0.5, 1.5)
+                # Snapshot slots before click — the wheel node is removed after spin
+                wheel_options = _read_wheel_options(driver)
                 if debug:
                     print("Clicking spin button...")
+                    if wheel_options:
+                        print(f"Wheel options before spin: {wheel_options}")
 
                 # Use JavaScript click to bypass any overlay issues
                 try:
@@ -982,14 +1085,10 @@ def spin_wheel(headless=True, debug=False):
                     spin_button.click()
 
                 result = _wait_for_result(driver, debug=debug)
+                print_spin_summary(result, wheel_options)
                 if result:
-                    print_banner("WHEEL RESULT", result)
                     log_prize("won", result, debug=debug)
                 else:
-                    print_banner(
-                        "WHEEL SPUN",
-                        "Could not read prize text — see debug_result.png",
-                    )
                     driver.save_screenshot("debug_result.png")
                     log_prize("spun_unknown", None, debug=debug)
                 return EXIT_OK

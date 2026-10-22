@@ -185,23 +185,27 @@ class TestTryDismissEdge:
 
 
 class TestWaitForResultEdge:
-    def test_skips_hidden_then_finds_visible(self):
-        hidden = MagicMock()
-        hidden.is_displayed.return_value = False
-        hidden.text = " hidden prize "
+    def test_reads_hidden_indiegala_prize_via_textcontent(self):
+        # Prize is filled on click while .fortune-wheel-results is still display-none
+        driver = MagicMock()
+        driver.execute_script.return_value = "📀 0.20 GalaCredit"
+        driver.find_element.side_effect = sw.NoSuchElementException()
+        with patch.object(sw.time, "sleep", lambda *_: None):
+            assert sw._wait_for_result(driver, timeout=0.05) == "📀 0.20 GalaCredit"
+
+    def test_prefers_later_selector_when_earlier_missing(self):
         visible = MagicMock()
-        visible.is_displayed.return_value = True
+        visible.get_attribute.return_value = " Visible Prize "
         visible.text = " Visible Prize "
 
         def find_element(_by, sel):
-            if sel == ".wheel-result":
-                return hidden
             if sel == ".wheel-prize":
                 return visible
             raise sw.NoSuchElementException()
 
         driver = MagicMock()
         driver.find_element.side_effect = find_element
+        driver.execute_script.return_value = None
         with patch.object(sw.time, "sleep", lambda *_: None):
             assert sw._wait_for_result(driver, timeout=0.05) == "Visible Prize"
 
@@ -209,20 +213,17 @@ class TestWaitForResultEdge:
         el = MagicMock()
         el.is_displayed.return_value = True
         el.text = "x"  # len after strip == 1 → rejected
+        el.get_attribute.return_value = "x"
         driver = MagicMock()
         driver.find_element.side_effect = lambda *_: el
         driver.execute_script.return_value = None
-        # Force loop to exit quickly: only one selector match forever → sleep until timeout
         with patch.object(sw.time, "sleep", lambda *_: None):
-            # shorten by making time jump
-            times = [0.0, 0.0, 1.0]  # enter loop, check, exit
+            times = [0.0, 0.0, 1.0]
 
             def fake_time():
                 return times.pop(0) if times else 99.0
 
             with patch.object(sw.time, "time", side_effect=fake_time):
-                # After loop, container + JS also see same el — container path may return "x"
-                # because container fallback only checks `if text` not len>1
                 driver.find_element.side_effect = sw.NoSuchElementException()
                 assert sw._wait_for_result(driver, timeout=0.05) is None
 
@@ -230,6 +231,7 @@ class TestWaitForResultEdge:
         container = MagicMock()
         container.is_displayed.return_value = True
         container.text = "  From modal  "
+        container.get_attribute.return_value = "  From modal  "
 
         def find_element(_by, sel):
             if sel == ".modal.show":
@@ -238,6 +240,7 @@ class TestWaitForResultEdge:
 
         driver = MagicMock()
         driver.find_element.side_effect = find_element
+        driver.execute_script.return_value = None
         times = [0.0, 99.0]  # skip poll loop immediately
 
         with (
@@ -248,18 +251,12 @@ class TestWaitForResultEdge:
         ):
             assert sw._wait_for_result(driver, timeout=5) == "From modal"
 
-    def test_js_fallback(self):
+    def test_indiegala_js_read_during_poll(self):
         driver = MagicMock()
         driver.find_element.side_effect = sw.NoSuchElementException()
-        driver.execute_script.return_value = "  JS Prize  "
-        times = [0.0, 99.0]
-        with (
-            patch.object(
-                sw.time, "time", side_effect=lambda: times.pop(0) if times else 99.0
-            ),
-            patch.object(sw.time, "sleep", lambda *_: None),
-        ):
-            assert sw._wait_for_result(driver, timeout=5) == "JS Prize"
+        driver.execute_script.return_value = "🎟️ -10% Coupon"
+        with patch.object(sw.time, "sleep", lambda *_: None):
+            assert sw._wait_for_result(driver, timeout=0.05) == "🎟️ -10% Coupon"
 
     def test_js_webdriver_exception_returns_none(self):
         driver = MagicMock()
@@ -274,15 +271,13 @@ class TestWaitForResultEdge:
         ):
             assert sw._wait_for_result(driver, timeout=5) is None
 
-    def test_debug_prints_selector_hit(self, capsys):
-        el = MagicMock()
-        el.is_displayed.return_value = True
-        el.text = "Prize"
+    def test_debug_prints_indiegala_hit(self, capsys):
         driver = MagicMock()
-        driver.find_element.side_effect = lambda *_: el
+        driver.execute_script.return_value = "Prize"
+        driver.find_element.side_effect = sw.NoSuchElementException()
         with patch.object(sw.time, "sleep", lambda *_: None):
             sw._wait_for_result(driver, timeout=0.05, debug=True)
-        assert "Result found via selector" in capsys.readouterr().out
+        assert "fortune-wheel-results" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

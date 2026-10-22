@@ -48,6 +48,38 @@ class TestPrintBanner:
         assert "spun t\n" not in out
 
 
+class TestPrintSpinSummary:
+    def test_lists_options_and_marks_winner(self, capsys):
+        sw.print_spin_summary(
+            "💿 10 GalaSilver",
+            [
+                "💿 10 GalaSilver",
+                "🎟️ -10% Coupon",
+                "🤩 ✨ Steam key",
+                "📀 0.20 GalaCredit",
+            ],
+        )
+        out = capsys.readouterr().out
+        assert "Wheel options (4):" in out
+        assert "★ 💿 10 GalaSilver" in out
+        assert "· 🎟️ -10% Coupon" in out
+        assert "YOU WON" in out
+        assert "💿 10 GalaSilver" in out
+
+    def test_unknown_prize_still_lists_options(self, capsys):
+        sw.print_spin_summary(None, ["A", "B"])
+        out = capsys.readouterr().out
+        assert "Wheel options (2):" in out
+        assert "· A" in out
+        assert "WHEEL SPUN" in out
+        assert "YOU WON" not in out
+
+    def test_normalizes_multiline_option_match(self):
+        assert sw._normalize_prize_label(
+            "💿 10\nGalaSilver"
+        ) == sw._normalize_prize_label("💿 10 GalaSilver")
+
+
 class TestExitCodes:
     def test_constants(self):
         assert sw.EXIT_OK == 0
@@ -251,12 +283,36 @@ class TestTryDismiss:
         assert ok is False
 
 
+class TestIsPrizeCatalog:
+    def test_single_prize_ok(self):
+        assert sw._is_prize_catalog("💿 10 GalaSilver") is False
+
+    def test_full_wheel_list_rejected(self):
+        blob = (
+            "Spin\n💿 10\nGalaSilver\n🎟️ -10%\nCoupon\n"
+            "Steam key\n📀 0.20\nGalaCredit\n💿 10\nGalaSilver"
+        )
+        assert sw._is_prize_catalog(blob) is True
+
+    def test_promo_copy_rejected(self):
+        assert sw._is_prize_catalog("Feeling lucky? Spin the Wheel of Fortune!") is True
+
+
 class TestWaitForResult:
+    def test_returns_indiegala_prize_via_js(self):
+        driver = MagicMock()
+        driver.execute_script.return_value = "💿 10 GalaSilver"
+        driver.find_element.side_effect = sw.NoSuchElementException()
+        with patch.object(sw.time, "sleep", lambda *_: None):
+            result = sw._wait_for_result(driver, timeout=0.05, debug=False)
+        assert result == "💿 10 GalaSilver"
+
     def test_returns_text_from_selector(self):
         driver = MagicMock()
         el = MagicMock()
         el.is_displayed.return_value = True
         el.text = "  100 Galagems  "
+        el.get_attribute.return_value = "  100 Galagems  "
 
         def find_element(by, sel):
             if sel == ".wheel-result":
@@ -264,10 +320,31 @@ class TestWaitForResult:
             raise sw.NoSuchElementException()
 
         driver.find_element.side_effect = find_element
+        driver.execute_script.return_value = None
 
         with patch.object(sw.time, "sleep", lambda *_: None):
             result = sw._wait_for_result(driver, timeout=0.05, debug=False)
         assert result == "100 Galagems"
+
+    def test_rejects_popup_time_prize_catalog(self):
+        driver = MagicMock()
+        catalog = (
+            "Spin\n💿 10\nGalaSilver\n🎟️ -10%\nCoupon\n"
+            "Steam key\n📀 0.20\nGalaCredit\n💿 10\nGalaSilver\n📀 0.20\nGalaCredit"
+        )
+        el = MagicMock()
+        el.get_attribute.return_value = catalog
+        el.text = catalog
+        driver.find_element.side_effect = lambda *_: el
+        driver.execute_script.return_value = None
+        times = [0.0, 99.0]
+        with (
+            patch.object(
+                sw.time, "time", side_effect=lambda: times.pop(0) if times else 99.0
+            ),
+            patch.object(sw.time, "sleep", lambda *_: None),
+        ):
+            assert sw._wait_for_result(driver, timeout=5) is None
 
     def test_returns_none_when_empty(self):
         driver = MagicMock()
