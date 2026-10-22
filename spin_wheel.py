@@ -15,7 +15,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Ensure UTF-8 output on Windows terminals (handles emoji in print statements)
@@ -298,7 +298,7 @@ def log_prize(status: str, result: str | None = None, debug: bool = False) -> No
     session_dir = get_session_dir()
     path = session_dir / "prizes.jsonl"
     record = {
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": datetime.now(UTC).isoformat(),
         "date": datetime.now().astimezone().date().isoformat(),
         "status": status,
         "result": result,
